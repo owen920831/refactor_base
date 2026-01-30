@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mvp_agent.core.llm_client import LLMClient
-from mvp_agent.agents.planner import Task
+from mvp_agent.core.schemas import TaskNode
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class Executor:
 
     def execute(
         self,
-        task: Task,
+        task: TaskNode,
         source_code: str,
         context: str | None = None,
     ) -> ExecutionResult:
@@ -166,7 +166,7 @@ class Executor:
 
     def fix_error(
         self,
-        task: Task,
+        task: TaskNode,
         generated_code: str,
         error_message: str,
     ) -> ExecutionResult:

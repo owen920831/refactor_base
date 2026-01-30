@@ -13,37 +13,11 @@ from pathlib import Path
 
 from mvp_agent.cognition.analyzer import Analyzer
 from mvp_agent.core.llm_client import LLMClient
+from mvp_agent.core.schemas import TaskDAG, TaskNode
 
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "planner.txt"
-
-
-@dataclass
-class Task:
-    """A single refactoring task."""
-
-    id: str
-    type: str  # "class", "function", "include", "setup"
-    name: str
-    description: str
-    dependencies: list[str] = field(default_factory=list)
-    priority: int = 3
-    source_lines: tuple[int, int] | None = None
-    status: str = "pending"  # "pending", "running", "success", "failed", "skipped"
-    retries: int = 0
-    error: str | None = None
-
-
-@dataclass
-class Plan:
-    """Refactoring plan containing ordered tasks."""
-
-    source_path: str
-    target_language: str
-    tasks: list[Task] = field(default_factory=list)
-    total_tokens: int = 0
-
 
 class Planner:
     """Generates refactoring plans from source analysis.
@@ -66,13 +40,13 @@ class Planner:
         if PROMPT_PATH.exists():
             return PROMPT_PATH.read_text(encoding="utf-8")
         logger.warning("Planner prompt not found at %s, using default", PROMPT_PATH)
-        return "You are a code refactoring planner. Output a JSON array of tasks."
+        return "You are a code refactoring planner. Output a JSON DAG of tasks."
 
     def create_plan(
         self,
         source_path: str | Path,
         target_language: str = "C++",
-    ) -> Plan:
+    ) -> TaskDAG:
         """Create a refactoring plan for the source file.
 
         Args:
@@ -80,7 +54,7 @@ class Planner:
             target_language: Target language for conversion.
 
         Returns:
-            Plan with ordered tasks.
+            TaskDAG with ordered tasks.
         """
         source_path = Path(source_path)
         source_code = source_path.read_text(encoding="utf-8")
@@ -102,7 +76,19 @@ class Planner:
 ## Analysis Summary
 {summary}
 
-Create a detailed task plan for converting this to {target}.
+Create a detailed task DAG for converting this to {target}.
+Output MUST be a valid JSON object matching the TaskDAG schema:
+{{
+  "tasks": [
+    {{
+      "id": "task_id",
+      "description": "...",
+      "dependencies": ["dep_id"],
+      "files_involved": ["..."],
+      "estimated_cost": 1
+    }}
+  ]
+}}
 """
 
         # Call LLM
@@ -113,86 +99,68 @@ Create a detailed task plan for converting this to {target}.
 
         if response.error:
             logger.error("Failed to generate plan: %s", response.error)
-            return Plan(
-                source_path=str(source_path),
-                target_language=target_language,
-                tasks=[],
-            )
+            return TaskDAG(tasks=[])
 
         # Parse tasks
-        tasks = self._parse_tasks(response.content)
+        return self._parse_tasks(response.content)
 
-        return Plan(
-            source_path=str(source_path),
-            target_language=target_language,
-            tasks=tasks,
-            total_tokens=response.total_tokens,
-        )
-
-    def _parse_tasks(self, content: str) -> list[Task]:
+    def _parse_tasks(self, content: str) -> TaskDAG:
         """Parse task list from LLM response.
 
         Args:
             content: LLM response content.
 
         Returns:
-            List of Task objects.
+            TaskDAG object.
         """
         # Try to extract JSON from response
         content = content.strip()
 
         # Remove markdown fences if present
-        if content.startswith("```"):
-            lines = content.split("\n")
-            content = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+        if "```json" in content:
+            import re
+            match = re.search(r'```json\s*(\{.*?\})\s*```', content, re.DOTALL)
+            if match:
+                content = match.group(1)
+            else:
+                 # Fallback for simple fence
+                 if content.startswith("```"):
+                    lines = content.split("\n")
+                    content = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+        elif content.startswith("```"):
+             lines = content.split("\n")
+             content = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
 
         try:
-            data = json.loads(content)
-            if not isinstance(data, list):
-                logger.error("Expected JSON array, got %s", type(data))
-                return []
+            # Use Pydantic parsing
+            dag = TaskDAG.model_validate_json(content)
+            
+            # Validate core logic
+            dag.validate_dag()
+            
+            return dag
 
-            tasks = []
-            for item in data:
-                source_lines = None
-                if "source_lines" in item and isinstance(item["source_lines"], list):
-                    source_lines = tuple(item["source_lines"][:2])
-
-                task = Task(
-                    id=item.get("id", f"task_{len(tasks)}"),
-                    type=item.get("type", "unknown"),
-                    name=item.get("name", ""),
-                    description=item.get("description", ""),
-                    dependencies=item.get("dependencies", []),
-                    priority=item.get("priority", 3),
-                    source_lines=source_lines,
-                )
-                tasks.append(task)
-
-            # Sort by priority and dependencies
-            tasks.sort(key=lambda t: (t.priority, len(t.dependencies)))
-            return tasks
-
-        except json.JSONDecodeError as e:
+        except Exception as e:
             logger.error("Failed to parse tasks JSON: %s", e)
             logger.debug("Content was: %s", content[:500])
-            return []
+            return TaskDAG(tasks=[])
 
-    def get_next_task(self, plan: Plan) -> Task | None:
-        """Get the next runnable task from the plan.
+    def get_next_tasks(self, plan: TaskDAG, completed_ids: set[str]) -> list[TaskNode]:
+        """Get ALL next runnable tasks (parallel execution support).
 
         Args:
-            plan: The refactoring plan.
+            plan: The refactoring plan (TaskDAG).
+            completed_ids: Set of completed task IDs.
 
         Returns:
-            Next pending task with satisfied dependencies, or None.
+            List of pending tasks with satisfied dependencies.
         """
-        completed_ids = {t.id for t in plan.tasks if t.status in ("success", "skipped")}
-
+        runnable = []
         for task in plan.tasks:
-            if task.status != "pending":
+            if task.id in completed_ids:
                 continue
+            
             if all(dep in completed_ids for dep in task.dependencies):
-                return task
-
-        return None
+                runnable.append(task)
+                
+        return runnable

@@ -52,8 +52,6 @@ class DependencyGraph:
                 # 1. Exact match (e.g. "my_module.utils")
                 if import_name in file_map:
                     self.graph.add_edge(importer_id, file_map[import_name])
-                # 2. Heuristic partial match
-                # (Scanner extraction might be imperfect, refining logic belongs here)
         
         logger.info(f"Built dependency graph: {self.graph.number_of_nodes()} nodes, {self.graph.number_of_edges()} edges")
 
@@ -98,6 +96,36 @@ class DependencyGraph:
             # Fallback: Just return all files
             return [data['file_path'] for _, data in self.graph.nodes(data=True)]
 
+    def to_json(self) -> Dict:
+        """
+        Export the dependency graph matching the V2 Schema.
+        """
+        graph_data = {
+            "nodes": [],
+            "edges": []
+        }
+        
+        # Nodes
+        for node in self.graph.nodes():
+            # In V2 Spec, ID format is "file:src/main.py"
+            # Our internal nodes are just relative paths e.g. "src/main.py"
+            v2_id = f"file:{node}"
+            graph_data["nodes"].append({
+                "id": v2_id,
+                "type": "file"
+            })
+            
+        # Edges
+        for u, v in self.graph.edges():
+            # u imports v
+            graph_data["edges"].append({
+                "src": f"file:{u}",
+                "dst": f"file:{v}",
+                "type": "imports"
+            })
+            
+        return graph_data
+        
     def get_dependencies(self, file_path: Path) -> List[Path]:
         """Get direct dependencies for a file."""
         try:

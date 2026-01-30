@@ -93,3 +93,28 @@ class ContextManager:
                     context_parts.append(text)
         
         return "\n\n".join(context_parts)
+
+    def export_rag_db_json(self) -> Dict:
+        """
+        Export the RAG chunk database matching V2 Schema.
+        """
+        rag_data = {
+            "chunks": []
+        }
+        
+        # Access VectorStore internal state to dump chunks
+        # Assuming VectorStore has .documents, .metadata, .embeddings
+        count = len(self.vector_store.documents)
+        for i in range(count):
+            meta = self.vector_store.metadata[i] if i < len(self.vector_store.metadata) else {}
+            chunk_entry = {
+                "chunk_id": f"ck_{i:06d}",
+                "path": meta.get("source", "unknown"),
+                "range": meta.get("range", [0, 0]), # Placeholder if not captured yet
+                "symbol_ids": meta.get("symbol_ids", []),
+                "text": self.vector_store.documents[i],
+                # "embedding": ... (skip huge vectors for readable JSON unless strictly requested)
+            }
+            rag_data["chunks"].append(chunk_entry)
+            
+        return rag_data

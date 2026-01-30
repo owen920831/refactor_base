@@ -199,3 +199,27 @@ class GitManager:
         except subprocess.CalledProcessError as e:
             logger.warning("Rollback last commit failed: %s", e.stderr)
             return False
+
+    def create_checkpoint(self, label: str) -> bool:
+        """Create a checkpoints (lightweight git tag)."""
+        try:
+             # Force overwrite tag if exists to act as a movable pointer if needed, 
+             # but usually unique labels are better.
+            self._run_git(["tag", "-f", label])
+            logger.info(f"Created checkpoint: {label}")
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to create checkpoint {label}: {e.stderr}")
+            return False
+
+    def rollback_to_checkpoint(self, label: str) -> bool:
+        """Hard reset to a specific checkpoint."""
+        try:
+            self._run_git(["reset", "--hard", label])
+            # Optional: Clean untracked files too
+            self._run_git(["clean", "-fd"])
+            logger.info(f"Rolled back to checkpoint: {label}")
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to rollback to {label}: {e.stderr}")
+            return False

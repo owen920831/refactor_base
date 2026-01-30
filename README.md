@@ -11,6 +11,7 @@ A powerful, autonomous agent for refactoring code (e.g., Python to C++) with rep
 - **Baseline Verification**: Automatically creates a test harness to capture the behavior of the original code ("ground truth") before any changes.
 - **Self-Healing Execution**: Generates code, verifies compilation/tests, and auto-fixes errors using LLM feedback loops.
 - **Robust Parsing**: Uses Regex-based scanning (fallback from Tree-sitter) for reliable import detection.
+- **Automated Build (CMake)**: Automatically generates `CMakeLists.txt` for the refactored project.
 - **Git Integration**: Safely experiments on new branches for each run.
 
 ## 🛠️ Installation & Usage
@@ -86,7 +87,7 @@ graph TD
 
 - **Header Management**: Currently, the agent may **inline** dependency code (e.g., `MathUtils` class) into `main.cpp` to ensure compilation, rather than creating separate `.hpp` files and `#include` directives. Future work will enforce strict Header/Source separation.
 - **Context Window**: For extremely large repositories, passing full file contents as context will hit token limits. Future versions will implement a Vector DB (RAG) to retrieve only relevant snippets.
-- **Build System**: The agent generates C++ files but does not yet generate a `CMakeLists.txt` or `Makefile` to link them together.
+- **Build System**: The agent generates `CMakeLists.txt` to link the generated C++ files, enabling immediate compilation.
 
 ## 🔮 Retrospective & Design Decisions
 
