@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 
+from mvp_agent.baseline import BaselineVerifier
 from mvp_agent.executor import Executor
 from mvp_agent.git_manager import GitManager
 from mvp_agent.llm_client import LLMClient, LLMConfig
@@ -38,6 +39,7 @@ def run_agent(
     logs_dir: str = "./logs",
     model: str = "gpt-oss:20b",
     use_git: bool = True,
+    skip_baseline: bool = False,
 ) -> int:
     """Run the refactoring agent.
 
@@ -66,7 +68,7 @@ def run_agent(
 
     # Initialize components
     llm_config = LLMConfig(model=model)
-    llm_client = LLMClient(llm_config)
+    llm_client = LLMClient(llm_config, log_dir=logs_dir)
 
     planner = Planner(llm_client)
     executor = Executor(llm_client)
@@ -93,6 +95,22 @@ def run_agent(
 
     # Read source code
     source_code = source_path.read_text(encoding="utf-8")
+
+    # Phase 0: Baseline Verification
+    if not skip_baseline:
+        logger.info("[Phase 0] Running baseline verification...")
+        baseline_verifier = BaselineVerifier(llm_client, reporter.intermediate_dir)
+        baseline_success = baseline_verifier.verify(source_path)
+        
+        if not baseline_success:
+            logger.error("Baseline verification FAILED. Aborting.")
+            report.final_status = "failed_baseline"
+            reporter.finalize_report(report)
+            reporter.save_json_log(report)
+            reporter.save_markdown_report(report)
+            return 1
+        logger.info("Baseline verification PASSED.")
+
 
     # Phase 1: Planning
     logger.info("[Phase 1] Creating refactoring plan...")
@@ -182,7 +200,16 @@ def run_agent(
     logger.info("[Phase 3] Generating final output...")
 
     if all_generated_code:
-        combined_code = "\n\n".join(all_generated_code.values())
+        # combined_code = "\n\n".join(all_generated_code.values())
+        logger.info("Assembling final code via LLM...")
+        assembly_result = executor.assemble_code(list(all_generated_code.values()))
+        report.total_tokens += assembly_result.tokens_used
+        
+        combined_code = assembly_result.generated_code
+        if not assembly_result.success:
+             logger.warning("Code assembly failed: %s", assembly_result.error)
+             combined_code = "\n\n".join(all_generated_code.values()) # Fallback
+
         combined_file = reporter.final_dir / f"{source_path.stem}.cpp"
         combined_file.write_text(combined_code, encoding="utf-8")
         report.generated_files.append(str(combined_file))
@@ -239,14 +266,14 @@ Examples:
     parser.add_argument(
         "--output",
         "-o",
-        default="./output",
-        help="Output directory (default: ./output)",
+        default=None,
+        help="Output directory (default: ./runs/<timestamp>/output)",
     )
     parser.add_argument(
         "--logs",
         "-l",
-        default="./logs",
-        help="Logs directory (default: ./logs)",
+        default=None,
+        help="Logs directory (default: ./runs/<timestamp>/logs)",
     )
     parser.add_argument(
         "--model",
@@ -259,16 +286,31 @@ Examples:
         action="store_true",
         help="Disable git integration",
     )
+    parser.add_argument(
+        "--skip-baseline",
+        action="store_true",
+        help="Skip baseline verification",
+    )
 
     args = parser.parse_args()
+
+    # Generate timestamped run directory
+    from datetime import datetime
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_root = Path("runs") / run_id
+    
+    # Use user provided paths or default strictly to timestamped structure
+    output_dir = args.output if args.output else str(run_root / "output")
+    logs_dir = args.logs if args.logs else str(run_root / "logs")
 
     exit_code = run_agent(
         prompt=args.prompt,
         source_path=args.source,
-        output_dir=args.output,
-        logs_dir=args.logs,
+        output_dir=output_dir,
+        logs_dir=logs_dir,
         model=args.model,
         use_git=not args.no_git,
+        skip_baseline=args.skip_baseline,
     )
 
     sys.exit(exit_code)

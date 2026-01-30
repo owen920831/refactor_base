@@ -161,20 +161,20 @@ class Executor:
         """
         user_prompt = f"""The following C++ code has an error. Fix it.
 
-## Task: {task.name}
+        ## Task: {task.name}
 
-## Current Code
-```cpp
-{generated_code}
-```
+        ## Current Code
+        ```cpp
+        {generated_code}
+        ```
 
-## Error
-```
-{error_message}
-```
+        ## Error
+        ```
+        {error_message}
+        ```
 
-Return only the fixed C++ code, no explanations.
-"""
+        Return only the fixed C++ code, no explanations.
+        """
 
         response = self.llm_client.generate_with_retry(
             prompt=user_prompt,
@@ -194,6 +194,54 @@ Return only the fixed C++ code, no explanations.
 
         return ExecutionResult(
             task_id=task.id,
+            success=True,
+            generated_code=code,
+            tokens_used=response.total_tokens,
+        )
+
+    def assemble_code(self, code_chunks: list[str]) -> ExecutionResult:
+        """Assemble multiple code chunks into a single valid file.
+
+        Args:
+            code_chunks: List of C++ code strings.
+
+        Returns:
+            ExecutionResult with merged code.
+        """
+        combined = "\n\n".join(code_chunks)
+        user_prompt = f"""Merge the following C++ code chunks into a single valid source file.
+        
+        # Instructions
+        1. Consolidate all headers at the top.
+        2. Remove duplicate includes.
+        3. Merge class definitions if split across chunks (e.g. methods defined outside class).
+        4. Ensure correct namespaces.
+        5. Remove duplicate helper functions.
+        6. Return ONLY the final C++ code.
+
+        # Code Chunks
+        ```cpp
+        {combined}
+        ```
+        """
+
+        response = self.llm_client.generate_with_retry(
+            prompt=user_prompt,
+            system_prompt=self._system_prompt,
+        )
+
+        if response.error:
+            return ExecutionResult(
+                task_id="assembly",
+                success=False,
+                generated_code="",
+                error=response.error,
+                tokens_used=response.total_tokens,
+            )
+
+        code = self._clean_code(response.content)
+        return ExecutionResult(
+            task_id="assembly",
             success=True,
             generated_code=code,
             tokens_used=response.total_tokens,

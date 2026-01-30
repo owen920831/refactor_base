@@ -51,17 +51,19 @@ class LLMClient:
         config: LLM configuration.
     """
 
-    def __init__(self, config: LLMConfig | None = None) -> None:
+    def __init__(self, config: LLMConfig | None = None, log_dir: str | Path | None = None) -> None:
         """Initialize the LLM client.
 
         Args:
+        Args:
             config: Optional LLM configuration. Uses defaults if not provided.
+            log_dir: Directory for logging traces. Defaults to "output/logs".
         """
         self.config = config or LLMConfig()
         self._client = httpx.Client(timeout=self.config.timeout)
         
         # Setup logging directory
-        self.log_dir = Path("output/logs")
+        self.log_dir = Path(log_dir) if log_dir else Path("output/logs")
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.trace_file = self.log_dir / "llm_trace.jsonl"
 
