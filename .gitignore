@@ -21,3 +21,4 @@ logs/*.json
 # Output
 output/*.cpp
 output/*.h
+output/
