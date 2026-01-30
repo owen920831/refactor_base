@@ -1,10 +1,8 @@
 """Tests for Python analyzer."""
 
-from pathlib import Path
 
-import pytest
 
-from mvp_agent.analyzer import Analyzer, ClassInfo, FunctionInfo, ModuleInfo
+from mvp_agent.analyzer import Analyzer
 
 
 class TestAnalyzer:
