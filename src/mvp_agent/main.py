@@ -101,7 +101,7 @@ def run_agent(
         logger.info("[Phase 0] Running baseline verification...")
         baseline_verifier = BaselineVerifier(llm_client, reporter.intermediate_dir)
         baseline_success = baseline_verifier.verify(source_path)
-        
+
         if not baseline_success:
             logger.error("Baseline verification FAILED. Aborting.")
             report.final_status = "failed_baseline"
@@ -204,7 +204,7 @@ def run_agent(
         logger.info("Assembling final code via LLM...")
         assembly_result = executor.assemble_code(list(all_generated_code.values()))
         report.total_tokens += assembly_result.tokens_used
-        
+
         combined_code = assembly_result.generated_code
         if not assembly_result.success:
              logger.warning("Code assembly failed: %s", assembly_result.error)
@@ -298,7 +298,7 @@ Examples:
     from datetime import datetime
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_root = Path("runs") / run_id
-    
+
     # Use user provided paths or default strictly to timestamped structure
     output_dir = args.output if args.output else str(run_root / "output")
     logs_dir = args.logs if args.logs else str(run_root / "logs")

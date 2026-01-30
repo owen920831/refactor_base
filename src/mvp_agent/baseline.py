@@ -42,7 +42,7 @@ class BaselineVerifier:
 
         # 1. Generate Harness
         harness_code, harness_ext, run_cmd = self._generate_harness(source_code, source_path)
-        
+
         if not harness_code:
             logger.error("Failed to generate harness")
             return False
@@ -54,7 +54,7 @@ class BaselineVerifier:
 
         # 3. Run Harness
         result = self._run_harness(harness_file, run_cmd)
-        
+
         # 4. Save Result
         self._save_result(result)
 
@@ -67,7 +67,7 @@ class BaselineVerifier:
             Tuple of (harness_code, file_extension, run_command_template).
         """
         prompt = f"""
-Analyze the following source code and create a standalone reproduction script (harness) 
+Analyze the following source code and create a standalone reproduction script (harness)
 in the SAME LANGUAGE that tests the main functionality and edge cases.
 The script must:
 1. Import or include the necessary parts from the source file (assume same directory).
@@ -109,7 +109,7 @@ Return JSON format:
             content = content[7:-3]
         elif content.startswith("```"):
             content = content[3:-3]
-        
+
         import json
         try:
             data = json.loads(content)
@@ -127,7 +127,7 @@ Return JSON format:
             import os
             env = os.environ.copy()
             env["PYTHONPATH"] = str(harness_file.parent.parent) # Assuming structure output/intermediate/..
-        
+
         logger.info("Running baseline command: %s", cmd)
         try:
             start_time = time.time()
@@ -140,13 +140,13 @@ Return JSON format:
                 env=env
             )
             duration = time.time() - start_time
-            
+
             success = proc.returncode == 0 and "Baseline: PASS" in proc.stdout
-            
+
             if not success:
                 logger.warning("Baseline output: %s", proc.stdout)
                 logger.warning("Baseline error: %s", proc.stderr)
-            
+
             return {
                 "success": success,
                 "command": cmd,
@@ -169,7 +169,7 @@ Return JSON format:
     def _save_result(self, result: dict[str, Any]) -> None:
         """Save verification result to JSON."""
         result_file = self.output_dir / "baseline_result.json"
-        
+
         import json
         with open(result_file, "w") as f:
             json.dump(result, f, indent=2)

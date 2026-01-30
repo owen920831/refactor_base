@@ -61,7 +61,7 @@ class LLMClient:
         """
         self.config = config or LLMConfig()
         self._client = httpx.Client(timeout=self.config.timeout)
-        
+
         # Setup logging directory
         self.log_dir = Path(log_dir) if log_dir else Path("output/logs")
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -119,7 +119,7 @@ class LLMClient:
                 completion_tokens=data.get("eval_count", 0),
                 done=data.get("done", True),
             )
-            
+
             self._log_trace(prompt, system_prompt, model, payload, response_obj)
             return response_obj
         except httpx.HTTPStatusError as e:
@@ -160,11 +160,11 @@ class LLMClient:
         )
 
     def _log_trace(
-        self, 
-        prompt: str, 
-        system_prompt: str | None, 
-        model: str, 
-        payload: dict[str, Any], 
+        self,
+        prompt: str,
+        system_prompt: str | None,
+        model: str,
+        payload: dict[str, Any],
         response: LLMResponse
     ) -> None:
         """Log the LLM call trace to a JSONL file."""
@@ -182,7 +182,7 @@ class LLMClient:
             },
             "error": response.error
         }
-        
+
         try:
             with open(self.trace_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")

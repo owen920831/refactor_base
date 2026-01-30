@@ -210,7 +210,7 @@ class Executor:
         """
         combined = "\n\n".join(code_chunks)
         user_prompt = f"""Merge the following C++ code chunks into a single valid source file.
-        
+
         # Instructions
         1. Consolidate all headers at the top.
         2. Remove duplicate includes.

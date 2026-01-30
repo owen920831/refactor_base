@@ -60,10 +60,10 @@ class Reporter:
         """
         self.output_dir = Path(output_dir)
         self.logs_dir = Path(logs_dir)
-        
+
         self.final_dir = self.output_dir / "final"
         self.intermediate_dir = self.output_dir / "intermediate"
-        
+
         self.final_dir.mkdir(parents=True, exist_ok=True)
         self.intermediate_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
