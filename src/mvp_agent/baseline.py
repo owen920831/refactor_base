@@ -77,7 +77,8 @@ The script must:
 5. If the source file is a script, import it as a module if possible, or simulate its execution.
 6. When importing the source file, use a unique module name (e.g. 'source_src') to avoid conflicts.
 7. IMPORTANT: Use the FULL ABSOLUTE PATH provided below for loading the module. Do not use relative paths.
-8. If the source code uses common globals (e.g. 'cache', 'List', 'Optional') without importing them, you MUST inject them into the module's namespace BEFORE executing it.
+8. If the source code uses common globals (e.g. 'cache', 'List', 'Optional') without importing them, you MUST
+   inject them into the module's namespace BEFORE executing it.
    Example injection:
    ```python
    import functools, typing
@@ -96,7 +97,8 @@ Return JSON format:
 {{
   "code": "full harness code",
   "extension": ".py" (or .cpp, .js etc),
-  "run_command": "command to run the script. IMPORTANT: Use '{{file}}' as placeholder for the filename. Example: 'python {{file}}' or 'g++ {{file}} -o runner && ./runner'."
+  "run_command": "command to run the script. IMPORTANT: Use '{{file}}' as placeholder for the filename. \
+Example: 'python {{file}}' or 'g++ {{file}} -o runner && ./runner'."
 }}
 """
         response = self.llm_client.generate_with_retry(prompt)
