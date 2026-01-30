@@ -9,11 +9,11 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from mvp_agent.llm_client import LLMClient
+from mvp_agent.core.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
-PROMPT_PATH = Path(__file__).parent / "prompts" / "test_gen.txt"
+PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "test_gen.txt"
 
 
 @dataclass

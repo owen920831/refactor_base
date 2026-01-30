@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from mvp_agent.planner import Task
+from mvp_agent.agents.planner import Task
 
 logger = logging.getLogger(__name__)
 

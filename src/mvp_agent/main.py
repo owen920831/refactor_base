@@ -1,27 +1,30 @@
 """Main entry point for MVP Refactoring Agent.
 
 Usage:
-    uv run python -m mvp_agent.main "Convert Python to C++" --source <file>
-
-The agent runs autonomously after receiving the initial prompt.
+    uv run python -m mvp_agent.main "Convert Python to C++" --source <file_or_dir>
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from pathlib import Path
+from datetime import datetime
 
-from mvp_agent.baseline import BaselineVerifier
-from mvp_agent.executor import Executor
-from mvp_agent.git_manager import GitManager
-from mvp_agent.llm_client import LLMClient, LLMConfig
-from mvp_agent.planner import Planner
+from mvp_agent.core.baseline import BaselineVerifier
+from mvp_agent.agents.executor import Executor
+from mvp_agent.core.git_manager import GitManager
+from mvp_agent.core.llm_client import LLMClient, LLMConfig
+from mvp_agent.agents.planner import Planner
 from mvp_agent.reporter import Reporter
-from mvp_agent.test_generator import TestGenerator
-from mvp_agent.verifier import Verifier
+from mvp_agent.agents.test_generator import TestGenerator
+from mvp_agent.core.verifier import Verifier
+from mvp_agent.cognition.scanner import RepoScanner
+from mvp_agent.cognition.graph import DependencyGraph
+from mvp_agent.cognition.retrieval import ContextManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,290 +34,224 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 
+from mvp_agent.agents.cmake_gen import CMakeGenerator
 
-def run_agent(
+class AgentContext:
+    """Holds shared components for the agent run."""
+    def __init__(self, model: str, output_dir: Path, logs_dir: Path):
+        self.llm_config = LLMConfig(model=model)
+        self.embedding_model = "llama3:latest"  # Use a stable model for embeddings
+        self.llm_client = LLMClient(self.llm_config, log_dir=logs_dir)
+        self.planner = Planner(self.llm_client)
+        self.executor = Executor(self.llm_client)
+        self.cmake_gen = CMakeGenerator(self.llm_client)
+        self.test_gen = TestGenerator(self.llm_client)
+        self.verifier = Verifier()
+        self.reporter = Reporter(output_dir, logs_dir)
+        self.git_manager = None
+
+    def setup_git(self, use_git: bool):
+        if use_git:
+            try:
+                self.git_manager = GitManager(self.reporter.output_dir)
+                branch = self.git_manager.create_branch()
+                logger.info("Working on git branch: %s", branch)
+            except Exception as e:
+                logger.warning("Git setup failed, continuing without git: %s", e)
+                self.git_manager = None
+
+def process_single_file(
+    ctx: AgentContext,
+    source_path: Path,
     prompt: str,
-    source_path: str,
-    output_dir: str = "./output",
-    logs_dir: str = "./logs",
-    model: str = "gpt-oss:20b",
-    use_git: bool = True,
+    context_manager: ContextManager | None = None,
     skip_baseline: bool = False,
-) -> int:
-    """Run the refactoring agent.
+    is_repo_mode: bool = False,
+    root_path: Path | None = None
+) -> bool:
+    """Process a single file refactoring task."""
+    
+    logger.info(f"Processing file: {source_path}")
+    
+    # Calculate relative path if in repo mode
+    rel_path = source_path.relative_to(root_path) if root_path else Path(source_path.name)
+    target_dir = ctx.reporter.final_dir / rel_path.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
 
-    Args:
-        prompt: User's task description prompt.
-        source_path: Path to Python source file.
-        output_dir: Directory for generated code.
-        logs_dir: Directory for debug logs.
-        model: Ollama model to use.
-        use_git: Whether to use git for rollback.
-
-    Returns:
-        Exit code (0 for success, 1 for failure).
-    """
-    source_path = Path(source_path).resolve()
-    output_dir = Path(output_dir).resolve()
-    logs_dir = Path(logs_dir).resolve()
-
-    logger.info("=" * 60)
-    logger.info("MVP Refactoring Agent")
-    logger.info("=" * 60)
-    logger.info("Prompt: %s", prompt)
-    logger.info("Source: %s", source_path)
-    logger.info("Model: %s", model)
-    logger.info("=" * 60)
-
-    # Initialize components
-    llm_config = LLMConfig(model=model)
-    llm_client = LLMClient(llm_config, log_dir=logs_dir)
-
-    planner = Planner(llm_client)
-    executor = Executor(llm_client)
-    test_gen = TestGenerator(llm_client)
-    verifier = Verifier()
-    reporter = Reporter(output_dir, logs_dir)
-
-    git_manager = None
-    if use_git:
-        try:
-            git_manager = GitManager(output_dir)
-            branch = git_manager.create_branch()
-            logger.info("Working on git branch: %s", branch)
-        except Exception as e:
-            logger.warning("Git setup failed, continuing without git: %s", e)
-            git_manager = None
-
-    # Create run report
-    report = reporter.create_run_report(
-        model=model,
+    # Create report object
+    report = ctx.reporter.create_run_report(
+        model=ctx.llm_config.model,
         source_file=str(source_path),
         target_language="C++",
     )
-
-    # Read source code
+    
     source_code = source_path.read_text(encoding="utf-8")
+    
+    # Retrieve Dependency Context
+    dependency_context = ""
+    if context_manager:
+        dependency_context = context_manager.retrieve_context_for_task(source_path, source_code)
+        if dependency_context:
+            logger.info("Retrieved dependency context (%d chars)", len(dependency_context))
 
     # Phase 0: Baseline Verification
     if not skip_baseline:
         logger.info("[Phase 0] Running baseline verification...")
-        baseline_verifier = BaselineVerifier(llm_client, reporter.intermediate_dir)
+        baseline_verifier = BaselineVerifier(ctx.llm_client, ctx.reporter.intermediate_dir)
         baseline_success = baseline_verifier.verify(source_path)
-
         if not baseline_success:
-            logger.error("Baseline verification FAILED. Aborting.")
-            report.final_status = "failed_baseline"
-            reporter.finalize_report(report)
-            reporter.save_json_log(report)
-            reporter.save_markdown_report(report)
-            return 1
-        logger.info("Baseline verification PASSED.")
-
+            logger.error(f"Baseline verification FAILED for {source_path.name}")
+            return False
 
     # Phase 1: Planning
-    logger.info("[Phase 1] Creating refactoring plan...")
-    plan = planner.create_plan(source_path, target_language="C++")
-    report.total_tokens += plan.total_tokens
-
+    logger.info(f"[Phase 1] Planning for {source_path.name}...")
+    plan = ctx.planner.create_plan(source_path, target_language="C++")
     if not plan.tasks:
-        logger.error("Failed to create plan - no tasks generated")
-        report.final_status = "failed"
-        reporter.save_json_log(report)
-        return 1
-
-    logger.info("Generated %d tasks", len(plan.tasks))
-
+        logger.error("No tasks generated.")
+        return False
+    
     # Phase 2: Execution Loop
-    logger.info("[Phase 2] Executing tasks...")
+    logger.info(f"[Phase 2] Executing {len(plan.tasks)} tasks...")
     all_generated_code = {}
-
+    
     while True:
-        task = planner.get_next_task(plan)
+        task = ctx.planner.get_next_task(plan)
         if task is None:
             break
-
+            
         task.status = "running"
         task_start = time.time()
-        logger.info("Executing task: %s (%s)", task.name, task.id)
-
-        # Execute conversion
-        context = "\n".join(all_generated_code.values()) if all_generated_code else None
-        result = executor.execute(task, source_code, context)
-        report.total_tokens += result.tokens_used
-
+        
+        # Inject Dependency Context into Execution
+        combined_context = []
+        if dependency_context:
+            combined_context.append(dependency_context)
+        if all_generated_code:
+            combined_context.append("\n".join(all_generated_code.values()))
+        
+        execution_context = "\n\n".join(combined_context) if combined_context else None
+        
+        result = ctx.executor.execute(task, source_code, execution_context)
+        
         if not result.success:
             task.status = "failed"
             task.error = result.error
-            logger.error("Task failed: %s", result.error)
-            reporter.add_task_result(report, task, time.time() - task_start)
+            logger.error(f"Task {task.name} failed: {result.error}")
             continue
 
-        # Verify compilation
-        verification = verifier.check_compile(result.generated_code)
-
-        retry_count = 0
-        while not verification.compile_success and retry_count < MAX_RETRIES:
-            retry_count += 1
-            task.retries = retry_count
-            logger.warning("Compile failed, retry %d/%d", retry_count, MAX_RETRIES)
-
-            # Try to fix
-            fix_result = executor.fix_error(
-                task, result.generated_code, verification.compile_error or ""
-            )
-            report.total_tokens += fix_result.tokens_used
-
-            if fix_result.success:
-                result = fix_result
-                verification = verifier.check_compile(result.generated_code)
-
-        if not verification.compile_success:
-            task.status = "failed"
-            task.error = verification.compile_error
-            logger.error("Task failed after %d retries", MAX_RETRIES)
-
-            if git_manager:
-                git_manager.rollback()
-
-            reporter.add_task_result(report, task, time.time() - task_start)
-            continue
-
-        # Success - save code
         task.status = "success"
         all_generated_code[task.id] = result.generated_code
+        
+        # Save intermediate
+        outfile = ctx.reporter.intermediate_dir / f"{task.name}.cpp"
+        outfile.write_text(result.generated_code, encoding="utf-8")
+        
+        if ctx.git_manager:
+            ctx.git_manager.commit(f"feat({source_path.stem}): {task.name}")
 
-        # Save to file
-        output_file = reporter.intermediate_dir / f"{task.name.lower().replace(' ', '_')}.cpp"
-        output_file.write_text(result.generated_code, encoding="utf-8")
-
-        if git_manager:
-            git_manager.commit(f"feat: {task.name}")
-
-        reporter.add_task_result(
-            report, task, time.time() - task_start, str(output_file)
-        )
-        logger.info("Task completed: %s", task.name)
-
-    # Phase 3: Generate combined output
-    logger.info("[Phase 3] Generating final output...")
-
+    # Phase 3: Assembly & Final Output
+    logger.info("[Phase 3] Assembly & Splitting...")
     if all_generated_code:
-        # combined_code = "\n\n".join(all_generated_code.values())
-        logger.info("Assembling final code via LLM...")
-        assembly_result = executor.assemble_code(list(all_generated_code.values()))
-        report.total_tokens += assembly_result.tokens_used
+        assembly_result = ctx.executor.assemble_code(list(all_generated_code.values()))
+        
+        # Split into Header/Source
+        split_result = ctx.executor.separate_header_source(assembly_result.generated_code, source_path.stem)
+        
+        # Handle multiple files from split if present
+        if split_result.files:
+            for filename, content in split_result.files.items():
+                final_file = target_dir / filename
+                final_file.write_text(content, encoding="utf-8")
+                logger.info(f"Saved {filename} to {final_file}")
+                
+                # Register interface (headers) for dependents
+                if context_manager and (filename.endswith('.hpp') or filename.endswith('.h')):
+                    context_manager.register_interface(source_path, content)
+        else:
+            final_code = assembly_result.generated_code
+            final_file = target_dir / f"{source_path.stem}.cpp"
+            final_file.write_text(final_code, encoding="utf-8")
+            logger.info(f"Saved final code to {final_file}")
+            
+            if context_manager:
+                context_manager.register_interface(source_path, final_code)
 
-        combined_code = assembly_result.generated_code
-        if not assembly_result.success:
-             logger.warning("Code assembly failed: %s", assembly_result.error)
-             combined_code = "\n\n".join(all_generated_code.values()) # Fallback
+        # Generate Tests (simplified, usually maps to one test file)
+        test_res = ctx.test_gen.generate(assembly_result.generated_code, original_python=source_code)
+        if test_res.success:
+            test_file = target_dir / f"test_{source_path.stem}.cpp"
+            test_file.write_text(test_res.test_code)
 
-        combined_file = reporter.final_dir / f"{source_path.stem}.cpp"
-        combined_file.write_text(combined_code, encoding="utf-8")
-        report.generated_files.append(str(combined_file))
+    return True
 
-        # Generate tests
-        logger.info("Generating unit tests...")
-        test_result = test_gen.generate(combined_code, original_python=source_code)
-        report.total_tokens += test_result.tokens_used
+def run_repo(ctx: AgentContext, root_path: Path, prompt: str, skip_baseline: bool):
+    # """Orchestrate repository refactoring."""
+    logger.info(f"Scanning repository: {root_path}")
+    scanner = RepoScanner(root_path)
+    files = scanner.scan()
+    
+    # Parse all files
+    parsed_files = [scanner.parse_file(f) for f in files]
+    
+    # Build Graph
+    graph = DependencyGraph(root_path)
+    graph.build(parsed_files)
+    
+    sorted_files = graph.get_topological_sort()
+    logger.info(f"Refactoring Order: {[f.name for f in sorted_files]}")
+    
+    ctx_manager = ContextManager(root_path, graph, ctx.llm_client, embedding_model=ctx.embedding_model)
+    
+    success_count = 0
+    for file_path in sorted_files:
+        logger.info(f"--- Processing {file_path.name} ---")
+        if process_single_file(ctx, file_path, prompt, ctx_manager, skip_baseline, is_repo_mode=True, root_path=root_path):
+            success_count += 1
+        else:
+            logger.error(f"Failed to process {file_path.name}")
+            
+    logger.info(f"Repository refactoring complete. {success_count}/{len(sorted_files)} files processed.")
+    
+    # Generate CMakeLists.txt
+    logger.info("Generating CMake distribution...")
+    final_files = []
+    for root, _, current_files in os.walk(ctx.reporter.final_dir):
+        for f in current_files:
+            p = Path(root) / f
+            final_files.append(p.relative_to(ctx.reporter.final_dir))
+    
+    if final_files:
+        ctx.cmake_gen.generate_root_cmake(ctx.reporter.final_dir, final_files)
+    else:
+        logger.warning("No files found in final dir, skipping CMake generation.")
 
-        if test_result.success:
-            test_file = reporter.final_dir / f"test_{source_path.stem}.cpp"
-            test_file.write_text(test_result.test_code, encoding="utf-8")
-            report.generated_files.append(str(test_file))
-            logger.info("Generated test file: %s", test_file)
-
-    # Phase 4: Generate report
-    logger.info("[Phase 4] Generating report...")
-    reporter.finalize_report(report)
-    reporter.save_json_log(report)
-    reporter.save_markdown_report(report)
-
-    logger.info("=" * 60)
-    logger.info("Refactoring complete!")
-    logger.info("Status: %s", report.final_status)
-    logger.info("Report: %s", output_dir / "REFACTOR_REPORT.md")
-    logger.info("=" * 60)
-
-    return 0 if report.final_status in ("success", "partial_success") else 1
-
-
-def main() -> None:
-    """CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description="MVP Refactoring Agent - Convert Python to C++",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    uv run python -m mvp_agent.main --source ./example.py
-    uv run python -m mvp_agent.main --source ./example.py --model gpt-oss:20b
-        """,
-    )
-    parser.add_argument(
-        "prompt",
-        nargs="?",
-        default="Convert this Python code to C++",
-        help="Task description prompt (default: Convert to C++)",
-    )
-    parser.add_argument(
-        "--source",
-        "-s",
-        required=True,
-        help="Path to Python source file",
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        default=None,
-        help="Output directory (default: ./runs/<timestamp>/output)",
-    )
-    parser.add_argument(
-        "--logs",
-        "-l",
-        default=None,
-        help="Logs directory (default: ./runs/<timestamp>/logs)",
-    )
-    parser.add_argument(
-        "--model",
-        "-m",
-        default="gpt-oss:20b",
-        help="Ollama model (default: gpt-oss:20b)",
-    )
-    parser.add_argument(
-        "--no-git",
-        action="store_true",
-        help="Disable git integration",
-    )
-    parser.add_argument(
-        "--skip-baseline",
-        action="store_true",
-        help="Skip baseline verification",
-    )
-
+def main():
+    parser = argparse.ArgumentParser(description="MVP Refactoring Agent")
+    parser.add_argument("prompt", nargs="?", default="Convert to C++")
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--output", default=None)
+    parser.add_argument("--logs", default=None)
+    parser.add_argument("--model", default="gpt-oss:20b")
+    parser.add_argument("--no-git", action="store_true")
+    parser.add_argument("--skip-baseline", action="store_true")
+    
     args = parser.parse_args()
-
-    # Generate timestamped run directory
-    from datetime import datetime
+    
+    source_path = Path(args.source).resolve()
+    
+    # Setup Run Environment
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_root = Path("runs") / run_id
-
-    # Use user provided paths or default strictly to timestamped structure
-    output_dir = args.output if args.output else str(run_root / "output")
-    logs_dir = args.logs if args.logs else str(run_root / "logs")
-
-    exit_code = run_agent(
-        prompt=args.prompt,
-        source_path=args.source,
-        output_dir=output_dir,
-        logs_dir=logs_dir,
-        model=args.model,
-        use_git=not args.no_git,
-        skip_baseline=args.skip_baseline,
-    )
-
-    sys.exit(exit_code)
-
+    output_dir = Path(args.output) if args.output else run_root / "output"
+    logs_dir = Path(args.logs) if args.logs else run_root / "logs"
+    
+    ctx = AgentContext(args.model, output_dir, logs_dir)
+    ctx.setup_git(not args.no_git)
+    
+    if source_path.is_dir():
+        run_repo(ctx, source_path, args.prompt, args.skip_baseline)
+    else:
+        process_single_file(ctx, source_path, args.prompt, None, args.skip_baseline)
 
 if __name__ == "__main__":
     main()

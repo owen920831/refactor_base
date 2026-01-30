@@ -159,6 +159,28 @@ class LLMClient:
             error=f"Failed after {max_retries} attempts: {last_error}",
         )
 
+    def embed(self, text: str, model: str | None = None) -> list[float]:
+        """Generate embeddings for text.
+        
+        Args:
+            text: Text to embed.
+            model: Model to use (must support embeddings).
+        
+        Returns:
+            List of floats representing the embedding vector.
+        """
+        model = model or self.config.model
+        try:
+            response = self._client.post(
+                f"{self.config.base_url}/api/embeddings",
+                json={"model": model, "prompt": text},
+            )
+            response.raise_for_status()
+            return response.json().get("embedding", [])
+        except Exception as e:
+            logger.error(f"Embedding failed: {e}")
+            return []
+
     def _log_trace(
         self,
         prompt: str,

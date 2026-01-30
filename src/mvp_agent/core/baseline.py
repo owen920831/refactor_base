@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from mvp_agent.llm_client import LLMClient
+from mvp_agent.core.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 

@@ -22,3 +22,6 @@ logs/*.json
 output/*.cpp
 output/*.h
 output/
+
+# log
+runs/*
