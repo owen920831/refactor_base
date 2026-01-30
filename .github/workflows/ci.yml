@@ -24,12 +24,12 @@ jobs:
       - name: Install dependencies
         run: |
           cd MVP_agent
-          uv sync --all-extras
+          uv sync --extra dev
 
       - name: Lint with ruff
         run: |
           cd MVP_agent
-          uv run ruff check src/
+          uv run ruff check src/ --output-format full
 
       - name: Type check (basic)
         run: |
