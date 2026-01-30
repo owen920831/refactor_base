@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# UV
+.venv/
+uv.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs
+logs/*.json
+
+# Output
+output/*.cpp
+output/*.h
