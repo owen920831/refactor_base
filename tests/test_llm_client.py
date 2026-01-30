@@ -11,7 +11,7 @@ class TestLLMConfig:
     def test_default_config(self) -> None:
         """Test default configuration values."""
         config = LLMConfig()
-        assert config.model == "gpt-oss:20b"
+        assert config.model == "gpt-oss:120b"
         assert config.base_url == "http://localhost:11434"
         assert config.temperature == 0.7
         assert config.max_tokens == 4096

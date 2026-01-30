@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+import json
+import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +27,7 @@ class LLMConfig:
     model: str = "gpt-oss:20b"
     base_url: str = "http://localhost:11434"
     temperature: float = 0.7
-    max_tokens: int = 4096
+    max_tokens: int = 16384
     timeout: float = 300.0
 
 
@@ -56,6 +59,11 @@ class LLMClient:
         """
         self.config = config or LLMConfig()
         self._client = httpx.Client(timeout=self.config.timeout)
+        
+        # Setup logging directory
+        self.log_dir = Path("output/logs")
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.trace_file = self.log_dir / "llm_trace.jsonl"
 
     def generate(
         self,
@@ -101,7 +109,7 @@ class LLMClient:
             response.raise_for_status()
             data = response.json()
 
-            return LLMResponse(
+            response_obj = LLMResponse(
                 content=data.get("message", {}).get("content", ""),
                 model=data.get("model", model),
                 total_tokens=data.get("eval_count", 0) + data.get("prompt_eval_count", 0),
@@ -109,6 +117,9 @@ class LLMClient:
                 completion_tokens=data.get("eval_count", 0),
                 done=data.get("done", True),
             )
+            
+            self._log_trace(prompt, system_prompt, model, payload, response_obj)
+            return response_obj
         except httpx.HTTPStatusError as e:
             logger.error("HTTP error from Ollama: %s", e)
             return LLMResponse(content="", model=model, error=str(e))
@@ -145,6 +156,36 @@ class LLMClient:
             model=self.config.model,
             error=f"Failed after {max_retries} attempts: {last_error}",
         )
+
+    def _log_trace(
+        self, 
+        prompt: str, 
+        system_prompt: str | None, 
+        model: str, 
+        payload: dict[str, Any], 
+        response: LLMResponse
+    ) -> None:
+        """Log the LLM call trace to a JSONL file."""
+        log_entry = {
+            "timestamp": time.time(),
+            "model": model,
+            "system_prompt": system_prompt,
+            "user_prompt": prompt,
+            "full_messages": payload.get("messages", []),
+            "response_content": response.content,
+            "tokens": {
+                "prompt": response.prompt_tokens,
+                "completion": response.completion_tokens,
+                "total": response.total_tokens
+            },
+            "error": response.error
+        }
+        
+        try:
+            with open(self.trace_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.error("Failed to write LLM trace: %s", e)
 
     def close(self) -> None:
         """Close the HTTP client."""

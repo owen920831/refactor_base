@@ -167,7 +167,7 @@ def run_agent(
         all_generated_code[task.id] = result.generated_code
 
         # Save to file
-        output_file = output_dir / f"{task.name.lower().replace(' ', '_')}.cpp"
+        output_file = reporter.intermediate_dir / f"{task.name.lower().replace(' ', '_')}.cpp"
         output_file.write_text(result.generated_code, encoding="utf-8")
 
         if git_manager:
@@ -183,7 +183,7 @@ def run_agent(
 
     if all_generated_code:
         combined_code = "\n\n".join(all_generated_code.values())
-        combined_file = output_dir / f"{source_path.stem}.cpp"
+        combined_file = reporter.final_dir / f"{source_path.stem}.cpp"
         combined_file.write_text(combined_code, encoding="utf-8")
         report.generated_files.append(str(combined_file))
 
@@ -193,7 +193,7 @@ def run_agent(
         report.total_tokens += test_result.tokens_used
 
         if test_result.success:
-            test_file = output_dir / f"test_{source_path.stem}.cpp"
+            test_file = reporter.final_dir / f"test_{source_path.stem}.cpp"
             test_file.write_text(test_result.test_code, encoding="utf-8")
             report.generated_files.append(str(test_file))
             logger.info("Generated test file: %s", test_file)
@@ -221,7 +221,7 @@ def main() -> None:
         epilog="""
 Examples:
     uv run python -m mvp_agent.main --source ./example.py
-    uv run python -m mvp_agent.main --source ./example.py --model gpt-oss:120b
+    uv run python -m mvp_agent.main --source ./example.py --model gpt-oss:20b
         """,
     )
     parser.add_argument(

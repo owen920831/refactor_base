@@ -23,20 +23,16 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd MVP_agent
           uv sync --extra dev
 
       - name: Lint with ruff
         run: |
-          cd MVP_agent
           uv run ruff check src/ --output-format full
 
       - name: Type check (basic)
         run: |
-          cd MVP_agent
           uv run python -c "import mvp_agent; print('Import OK')"
 
       - name: Run tests
         run: |
-          cd MVP_agent
           uv run pytest tests/ -v --tb=short || echo "No tests found or tests need Ollama"
